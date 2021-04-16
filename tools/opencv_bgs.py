@@ -1,11 +1,11 @@
 """Script to perform Background substraction in videos with OpneCV algorithms(KNN, MOG).
 """
 import os
-from tqdm import tqdm
 from argparse import ArgumentParser
-from algorithms import read_img, IMG_EXTS
 
 import cv2
+from algorithms import IMG_EXTS, read_img
+from tqdm import tqdm
 
 
 def argument():
@@ -20,12 +20,13 @@ def argument():
                         action='store_true',
                         help="Whether to show the background when executing.")
     parser.add_argument('--save_dir',
+                        required=True,
                         default=None,
                         help="Dir to save the results!")
     parser.add_argument('--algorithm',
                         default='MOG2',
                         choices=['MOG2', 'KNN'],
-                        help="Algorithms in OpenCV to perform BGS.")
+                        help="Algorithm in OpenCV to perform BGS.")
     return parser.parse_args()
 
 
@@ -78,6 +79,7 @@ def main():
                 break
             bar.update()
         bar.close()
+        capture.release()
     else:
         assert args.video_path is None
         assert os.path.exists(args.frame_dir)
@@ -103,12 +105,12 @@ def main():
                     os.path.join(args.save_dir, f'fgmask_{frame_id}.png'),
                     fgMask)
 
-            keyboard = cv2.waitKey(30)
+            keyboard = cv2.waitKey(0)
             if keyboard == 'q' or keyboard == 27:
                 break
-    print(f'[Info] Done!!!')
+    print(f'[INFO] Done!!!')
     if args.save_dir is not None:
-        print(f"[Info] Foreground Masks have been saved at {args.save_dir} !!!")
+        print(f"[INFO] Foreground Masks have been saved at {args.save_dir} !!!")
 
 
 if __name__ == "__main__":

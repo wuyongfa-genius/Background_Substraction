@@ -1,155 +1,156 @@
-try:
-    # try import from tensorly package
-    import tensorly as tl
-    from tensorly.decomposition import robust_pca
+# The custom implementation of Robust PCA
+import numpy as np
+import numpy as np
+import torch
+import torch.nn.functional as F
+from sporco.admm.rpca import RobustPCA as RPCA_sporco
 
-    class RPCA:
-        """Robust Tensor PCA via ALM with support for missing values
-            Decomposes a tensor `X` into the sum of a low-rank component `D`
-            and a sparse component `E`.
-        Parameters
-            ----------
-            X : ndarray
-                tensor data of shape (n_samples, N1, ..., NS)
-            mask : ndarray
-                array of booleans with the same shape as `X`
-                should be zero where the values are missing and 1 everywhere else
-            tol : float
-                convergence value
-            reg_E : float, optional, default is 1
-                regularisation on the sparse part `E`
-            reg_J : float, optional, default is 1
-                regularisation on the low rank part `D`
-            mu_init : float, optional, default is 10e-5
-                initial value for mu
-            mu_max : float, optional, default is 10e9
-                maximal value for mu
-            learning_rate : float, optional, default is 1.1
-                percentage increase of mu at each iteration
-            n_iter_max : int, optional, default is 100
-                maximum number of iteration
-            verbose : int, default is 1
-                level of verbosity
-        Returns
-            -------
-            (D, E)
-                Robust decomposition of `X`
+__all__ = ['RPCA_gpu', 'svt_gpu', 'RPCA']
 
-            D : `X`-like array
-                low-rank part
-            E : `X`-like array
-                sparse error part
+
+class RPCA:
+    """Robust PCA using principal component pursuit (PCP) algorithm.
+    Referenced from https://github.com/dganguli/robust-pca/blob/master/r_pca.py
+    Args:
+        mu(float): coefficient of the augmented lagrange multiplier
+        lmbda(float): coefficient of the sparse part
+        max_iter(int): maximal iterations to perform
+        tol(float): tolerance(error bound) of the result
     """
-        def __init__(self,
-                     mask=None,
-                     tol=10e-7,
-                     reg_E=1,
-                     reg_J=1,
-                     mu_init=10e-5,
-                     mu_max=10e9,
-                     learning_rate=1.1,
-                     n_iter_max=100,
-                     verbose=1,
-                     backend='numpy'):
-            self.mask = mask
-            self.tol = tol
-            self.reg_E = reg_E
-            self.reg_J = reg_J
-            self.mu_init = mu_init
-            self.mu_max = mu_max
-            self.lr = learning_rate
-            self.n_iter_max = n_iter_max
-            self.verbose = verbose
-            tl.set_backend(backend)
+    def __init__(self, D, mu=None, lmbda=None, max_iter=100, tol=None):
+        self.D = D
+        self.S = np.zeros(self.D.shape)
+        self.Y = np.zeros(self.D.shape)
+        self.max_iter = max_iter
+        self.tol = tol
 
-        def __call__(self, X):
-            return robust_pca(X, self.mask, self.tol, self.reg_E, self.reg_J,
-                              self.mu_init, self.mu_max, self.lr,
-                              self.n_iter_max, self.verbose)
+        if mu:
+            self.mu = mu
+        else:
+            self.mu = np.prod(
+                self.D.shape) / (4 * np.linalg.norm(self.D, ord=1))
 
-except ImportError:
-    # import the custom implementation
-    import numpy as np
+        self.mu_inv = 1 / self.mu
 
-    class RPCA:
-        """Robust PCA using principal component pursuit (PCP) algorithm.
-        Referenced from https://github.com/dganguli/robust-pca/blob/master/r_pca.py
-        Args:
-            mu(float): coefficient of the augmented lagrange multiplier
-            lmbda(float): coefficient of the sparse part
-            max_iter(int): maximal iterations to perform
-            log_interval(int): how often do you want to print error info
-            tol(float): tolerance(error bound) of the result
-        """
-        def __init__(self,
-                     D,
-                     mu=None,
-                     lmbda=None,
-                     max_iter=100,
-                     log_interval=10,
-                     tol=None):
-            self.D = D
-            self.S = np.zeros(self.D.shape)
-            self.Y = np.zeros(self.D.shape)
-            self.max_iter = max_iter
-            self.log_interval = log_interval
-            self.tol = tol
+        if lmbda:
+            self.lmbda = lmbda
+        else:
+            self.lmbda = 1 / np.sqrt(np.max(self.D.shape))
 
-            if mu:
-                self.mu = mu
-            else:
-                self.mu = np.prod(
-                    self.D.shape) / (4 * np.linalg.norm(self.D, ord=1))
+    @staticmethod
+    def frobenius_norm(M):
+        return np.linalg.norm(M, ord='fro')
 
-            self.mu_inv = 1 / self.mu
+    @staticmethod
+    def shrink(M, tau):
+        return np.sign(M) * np.maximum((np.abs(M) - tau), np.zeros(M.shape))
 
-            if lmbda:
-                self.lmbda = lmbda
-            else:
-                self.lmbda = 1 / np.sqrt(np.max(self.D.shape))
+    def svd_threshold(self, M, tau):
+        U, S, V = np.linalg.svd(M, full_matrices=False)
+        return np.dot(U, np.dot(np.diag(self.shrink(S, tau)), V))
 
-        @staticmethod
-        def frobenius_norm(M):
-            return np.linalg.norm(M, ord='fro')
+    def __call__(self):
+        iter = 0
+        err = np.Inf
+        Sk = self.S
+        Yk = self.Y
+        Lk = np.zeros(self.D.shape)
 
-        @staticmethod
-        def shrink(M, tau):
-            return np.sign(M) * np.maximum(
-                (np.abs(M) - tau), np.zeros(M.shape))
+        if self.tol:
+            _tol = self.tol
+        else:
+            _tol = (1e-7) * self.frobenius_norm(self.D)
 
-        def svd_threshold(self, M, tau):
-            U, S, V = np.linalg.svd(M, full_matrices=False)
-            return np.dot(U, np.dot(np.diag(self.shrink(S, tau)), V))
+        #this loop implements the principal component pursuit (PCP) algorithm
+        #located in the table on page 29 of https://arxiv.org/pdf/0912.3599.pdf
+        while (err > _tol) and iter < self.max_iter:
+            Lk = self.svd_threshold(self.D - Sk + self.mu_inv * Yk,
+                                    self.mu_inv)  #this line implements step 3
+            Sk = self.shrink(self.D - Lk + (self.mu_inv * Yk), self.mu_inv *
+                             self.lmbda)  #this line implements step 4
+            Yk = Yk + self.mu * (self.D - Lk - Sk
+                                 )  #this line implements step 5
+            err = self.frobenius_norm(self.D - Lk - Sk)
+            iter += 1
+            print("[INFO] iter: ", iter, "error: ", err)
+            if err < _tol:
+                break
+        print(f"[INFO] Converged after {iter} iterations.")
 
-        def __call__(self):
-            iter = 0
-            err = np.Inf
-            Sk = self.S
-            Yk = self.Y
-            Lk = np.zeros(self.D.shape)
+        self.L = Lk
+        self.S = Sk
+        return Lk, Sk
 
-            if self.tol:
-                _tol = self.tol
-            else:
-                _tol = 1E-7 * self.frobenius_norm(self.D)
 
-            #this loop implements the principal component pursuit (PCP) algorithm
-            #located in the table on page 29 of https://arxiv.org/pdf/0912.3599.pdf
-            while (err > _tol) and iter < self.max_iter:
-                Lk = self.svd_threshold(
-                    self.D - Sk + self.mu_inv * Yk,
-                    self.mu_inv)  #this line implements step 3
-                Sk = self.shrink(self.D - Lk + (self.mu_inv * Yk),
-                                 self.mu_inv *
-                                 self.lmbda)  #this line implements step 4
-                Yk = Yk + self.mu * (self.D - Lk - Sk
-                                     )  #this line implements step 5
-                err = self.frobenius_norm(self.D - Lk - Sk)
-                iter += 1
-                if (iter % self.log_interval
-                    ) == 0 or iter == 1 or iter > self.max_iter or err <= _tol:
-                    print('iteration: {0}, error: {1}'.format(iter, err))
+class RPCA_gpu:
+    """ Referenced from https://gist.github.com/jcreinhold/ebf27f997f4c93c2f637c3c900d6388f
+        low-rank and sparse matrix decomposition via RPCA [1] with CUDA capabilities 
+        implementations of RPCA on the GPU (leveraging pytorch) 
+        for low-rank and sparse matrix decomposition as well as 
+        a nuclear-norm minimization routine via singular value 
+        thresholding for matrix completion
+        The RPCA implementation is heavily based on:
+            https://github.com/dganguli/robust-pca
+            
+        The svt implementation was based on:
+            https://github.com/tonyduan/matrix-completion
+        References:
+        [1] Candès, E. J., Li, X., Ma, Y., & Wright, J. (2011). 
+            Robust principal component analysis?. Journal of the ACM (JACM), 
+            58(3), 11.
+        [2] Cai, J. F., Candès, E. J., & Shen, Z. (2010). 
+            A singular value thresholding algorithm for matrix completion. 
+            SIAM Journal on Optimization, 20(4), 1956-1982.
+            
+        Author: Jacob Reinhold (jacob.reinhold@jhu.edu)
+    """
+    def __init__(self, D, mu=None, lmbda=None, max_iter=100, tol=None):
+        self.D = D
+        self.S = torch.zeros_like(self.D, device=D.device)
+        self.Y = torch.zeros_like(self.D, device=D.device)
+        self.mu = mu or (
+            torch.prod(torch.tensor(self.D.shape, device=D.device)) /
+            (4 * self.norm_p(self.D, 2))).item()
+        self.mu_inv = 1 / self.mu
+        self.lmbda = lmbda or (1 / torch.sqrt(
+            torch.max(
+                torch.tensor(self.D.shape,
+                             device=D.device,
+                             dtype=torch.float32)))).item()
+        self.max_iter = max_iter
+        self.tol = tol
 
-            self.L = Lk
-            self.S = Sk
-            return Lk, Sk
+    @staticmethod
+    def norm_p(M, p):
+        return torch.sum(torch.pow(M, p))
+
+    @staticmethod
+    def shrink(M, tau):
+        return torch.sign(M) * F.relu(
+            torch.abs(M) - tau)  # hack to save memory
+
+    def svd_threshold(self, M, tau):
+        U, s, V = torch.svd(M, some=True)
+        return torch.mm(U, torch.mm(torch.diag(self.shrink(s, tau)), V.t()))
+
+    def __call__(self):
+        i, err = 0, np.inf
+        Sk, Yk, Lk = self.S, self.Y, torch.zeros_like(self.D,
+                                                      device=self.D.device)
+        _tol = self.tol or 1e-7 * self.norm_p(torch.abs(self.D), 2)
+        while err > _tol and i < self.max_iter:
+            Lk = self.svd_threshold(self.D - Sk + self.mu_inv * Yk,
+                                    self.mu_inv)
+            Sk = self.shrink(self.D - Lk + (self.mu_inv * Yk),
+                             self.mu_inv * self.lmbda)
+            Yk = Yk + self.mu * (self.D - Lk - Sk)
+            err = self.norm_p(torch.abs(self.D - Lk - Sk), 2) / self.norm_p(
+                self.D, 2)
+            i += 1
+            print(f'[INFO] iter: {i}; error: {err}')
+            if err < _tol or i > self.max_iter:
+                print(f"[INFO] Converged after {i} iterations. ")
+                break
+        self.L, self.S = Lk, Sk
+        return Lk, Sk
+

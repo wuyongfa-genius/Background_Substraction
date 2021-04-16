@@ -6,6 +6,6 @@ setup(name='Background Substraction',
       author='wuyongfa',
       author_email='',
       url='https://github.com/wuyongfa-genius/Background_Substraction',
-      install_requires=['numpy', 'tifffile', 'imagecodecs', 'opencv-python'],
+      install_requires=['numpy', 'tifffile', 'imagecodecs', 'opencv-python', 'tqdm', 'tensorly'],
       packages=find_packages()
       )

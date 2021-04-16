@@ -25,27 +25,27 @@ class GoDec:
     """
     def __init__(self,
                  X,
-                 rank=1,
+                 rank=2,
                  card=None,
                  iterated_power=2,
-                 max_iter=100,
-                 error_bound=0.001,
+                 max_iter=10,
+                 error_bound=1e-6,
                  return_error=False):
         self.X = X
         self.rank = rank
-        self.card = card = np.prod(X.shape) if card is None else card
+        self.card = int(np.prod(X.shape)/20) if card is None else card
         self.iterated_power = iterated_power
         self.max_iter = max_iter
         self.error_bound = error_bound
         self.return_error = return_error
 
-    def __call__(self, ):
+    def __call__(self):
         return self._godec(self.X, self.rank, self.card, self.iterated_power,
                            self.max_iter, self.error_bound, self.return_error)
 
     @staticmethod
     def _godec(X,
-               rank=1,
+               rank=2,
                card=None,
                iterated_power=2,
                max_iter=100,
@@ -96,8 +96,9 @@ class GoDec:
             if return_error:
                 RMSE.append(error)
 
-            print("iter: ", i, "error: ", error)
+            print("[INFO] iter: ", i, "error: ", error)
             if (error <= error_bound):
+                print(f"[INFO] Converged after {i} iterations.")
                 break
 
         if return_error:

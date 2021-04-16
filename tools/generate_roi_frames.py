@@ -1,10 +1,10 @@
 """Crop ROI raw frames from a given video or original raw frames."""
-import cv2
 import os
-import numpy as np
-from tqdm import tqdm
 from argparse import ArgumentParser
-from algorithms import read_img, IMG_EXTS, get_parent_dir
+
+import cv2
+from algorithms import IMG_EXTS, get_parent_dir, read_img
+from tqdm import tqdm
 
 
 def argument():
@@ -25,9 +25,10 @@ def argument():
         default='0,1',
         required=True,
         help="frame_range to crop, given in format `start, end`")
-    parser.add_argument('--save_dir',
-                        default=None,
-                        help="Dir to save the results!")
+    parser.add_argument(
+        '--save_dir',
+        default=None,
+        help="Dir to save the results, if not specified, create one.")
     return parser.parse_args()
 
 
@@ -42,6 +43,17 @@ def main():
     # if input is a video.
     if args.video_path is not None:
         assert args.frame_dir is None
+        # save_dir
+        if args.save_dir is None:
+            video_name = os.path.splitext(
+                (os.path.basename(args.video_path)))[0]
+            save_dir = os.path.join(
+                get_parent_dir(args.video_path),
+                f'{video_name}_cropped_frames/roi_{left}_{top}_{right}_{down}_frame_{start}_{end}'
+            )
+            os.makedirs(save_dir)
+        else:
+            os.makedirs(args.save_dir)
         capture = cv2.VideoCapture(args.video_path)
         if not capture.isOpened():
             print('[INFO] Unable to open: ' + args.video_path)
@@ -59,15 +71,6 @@ def main():
         print("[INFO] 视频时长: {}s".format(frame_all / fps))
         print("[INFO] 视频高度: {0}，宽度: {1}".format(frame_height, frame_width))
         bar = tqdm(total=end - start + 1)
-        # save_dir
-        if args.save_dir is None:
-            video_name = os.path.splitext(
-                (os.path.basename(args.video_path)))[0]
-            save_dir = os.path.join(
-                get_parent_dir(args.video_path),
-                f'{video_name}_cropped_frames/roi_{left}_{top}_{right}_{down}_frame_{start}_{end}'
-            )
-            os.makedirs(save_dir)
         # crop
         print("[INFO] Starting Cropping...")
         while True:
@@ -82,10 +85,21 @@ def main():
                         cropped_frame)
             bar.update()
         bar.close()
+        capture.release()
         print(f"[INFO] Done, cropped raw frames have been save at {save_dir}")
     else:
         assert args.video_path is None
         seqs = os.listdir(args.frame_dir)
+        # save_dir
+        if args.save_dir is None:
+            video_name = args.frame_dir.rstrip('/').split('/')[-1]
+            save_dir = os.path.join(
+                get_parent_dir(args.frame_dir.rstrip('/')),
+                f'{video_name}_cropped_frames/roi_{left}_{top}_{right}_{down}_frame_{start}_{end}'
+            )
+            os.makedirs(save_dir)
+        else:
+            os.makedirs(args.save_dir)
         seqs = [i for i in seqs if os.path.splitext(i)[-1] in IMG_EXTS]
         seqs.sort()
         # 获取视频信息
@@ -96,18 +110,11 @@ def main():
         assert left >= 0 and left < right and top >= 0 and top < down and\
             right <= frame_width and down <= frame_height
         print("[INFO] 视频总帧数: {}".format(len(seqs)))
-        print("[INFO] 视频高度: {0}，宽度: {1}".format(frame_height, frame_width))
-        # save_dir
-        if args.save_dir is None:
-            video_name = args.frame_dir.split('/')[-1]
-            save_dir = os.path.join(
-                get_parent_dir(args.frame_dir),
-                f'{video_name}_cropped_frames/roi_{left}_{top}_{right}_{down}_frame_{start}_{end}'
-            )
-            os.makedirs(save_dir)
+        print("[INFO] 视频高度: {0}，宽度: {1}".format(frame_height, frame_width))       
         # crop
         print("[INFO] Starting Cropping...")
-        for seq in tqdm(seqs):
+        bar = tqdm(total=end - start + 1)
+        for seq in seqs:
             seqpath = os.path.join(args.frame_dir, seq)
             frame_id = int(os.path.splitext(seq)[0])
             if frame_id < start or frame_id > end:
@@ -116,6 +123,8 @@ def main():
             cropped_frame = frame[top:down, left:right]
             cv2.imwrite(os.path.join(save_dir, f'{frame_id:06}.jpg'),
                         cropped_frame)
+            bar.update()
+        bar.close()
         print(f"[INFO] Done, cropped raw frames have been save at {save_dir}")
 
 
