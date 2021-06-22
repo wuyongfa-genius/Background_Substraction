@@ -4,7 +4,7 @@ import os
 from argparse import ArgumentParser
 
 import cv2
-from algorithms import IMG_EXTS, read_img
+from algorithms import IMG_EXTS, read_img, mk_save_dir
 from tqdm import tqdm
 
 
@@ -20,7 +20,6 @@ def argument():
                         action='store_true',
                         help="Whether to show the background when executing.")
     parser.add_argument('--save_dir',
-                        required=True,
                         default=None,
                         help="Dir to save the results!")
     parser.add_argument('--algorithm',
@@ -32,15 +31,18 @@ def argument():
 
 def main():
     args = argument()
-    if args.save_dir is not None:
-        os.makedirs(args.save_dir, exist_ok=True)
+    save_dir = mk_save_dir(args.algorithm, args.video_path,
+                           args.frame_dir, args.save_dir)
+    fg_save_dir = os.path.join(save_dir, 'fg')
+    os.makedirs(fg_save_dir, exist_ok=True)
     # initialize bgs alogorithm
     if args.algorithm == 'MOG2':
-        bgs = cv2.createBackgroundSubtractorMOG2(history=1000, varThreshold=400)
+        bgs = cv2.createBackgroundSubtractorMOG2(
+            history=100, varThreshold=36)
     else:
-        bgs = cv2.createBackgroundSubtractorKNN(history=400,
-                                                dist2Threshold=400)
-    ## read in video an d process
+        bgs = cv2.createBackgroundSubtractorKNN(history=100,
+                                                dist2Threshold=36)
+    # read in video an d process
     if args.video_path is not None:
         assert args.frame_dir is None
         capture = cv2.VideoCapture(args.video_path)
@@ -50,11 +52,11 @@ def main():
         # 获取视频fps
         fps = int(capture.get(cv2.CAP_PROP_FPS))
         # 获取视频总帧数
-        frame_all = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
-        print("[INFO] 视频FPS: {}".format(fps))
-        print("[INFO] 视频总帧数: {}".format(frame_all))
-        print("[INFO] 视频时长: {}s".format(frame_all / fps))
-        bar = tqdm(total=frame_all)
+        video_length = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
+        print("[INFO] FPS: {}".format(fps))
+        print("[INFO] Total Frames: {}".format(video_length))
+        print("[INFO] Total time: {}s".format(video_length / fps))
+        bar = tqdm(total=video_length)
 
         while True:
             ret, frame = capture.read()
@@ -69,10 +71,9 @@ def main():
 
                 cv2.imshow('Frame', frame)
                 cv2.imshow('FG Mask', fgMask)
-            if args.save_dir is not None:
-                cv2.imwrite(
-                    os.path.join(args.save_dir, f'fgmask_{frame_id}.png'),
-                    fgMask)
+            cv2.imwrite(
+                os.path.join(fg_save_dir, f'{frame_id:06}.png'),
+                fgMask)
 
             keyboard = cv2.waitKey(0)
             if keyboard == 'q' or keyboard == 27:
@@ -87,7 +88,7 @@ def main():
         seqs = [i for i in seqs if os.path.splitext(i)[-1] in IMG_EXTS]
         seqs.sort()
         assert len(seqs) > 1, "video length must be > 1 !!!"
-        print("[INFO] 视频总帧数: {}".format(len(seqs)))
+        print("[INFO] Total frames: {}".format(len(seqs)))
         for seq in tqdm(seqs):
             seqpath = os.path.join(args.frame_dir, seq)
             frame_id = int(os.path.splitext(seq)[0])
@@ -100,17 +101,17 @@ def main():
 
                 cv2.imshow('Frame', frame)
                 cv2.imshow('FG Mask', fgMask)
-            if args.save_dir is not None:
-                cv2.imwrite(
-                    os.path.join(args.save_dir, f'fgmask_{frame_id}.png'),
-                    fgMask)
+            cv2.imwrite(
+                os.path.join(fg_save_dir, f'{frame_id:06}.png'),
+                fgMask)
 
             keyboard = cv2.waitKey(0)
             if keyboard == 'q' or keyboard == 27:
                 break
     print(f'[INFO] Done!!!')
     if args.save_dir is not None:
-        print(f"[INFO] Foreground Masks have been saved at {args.save_dir} !!!")
+        print(
+            f"[INFO] Foreground Masks have been saved at {args.save_dir} !!!")
 
 
 if __name__ == "__main__":

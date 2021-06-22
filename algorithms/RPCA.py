@@ -3,9 +3,9 @@ import numpy as np
 import numpy as np
 import torch
 import torch.nn.functional as F
-from sporco.admm.rpca import RobustPCA as RPCA_sporco
 
-__all__ = ['RPCA_gpu', 'svt_gpu', 'RPCA']
+
+__all__ = ['RPCA_gpu', 'RPCA']
 
 
 class RPCA:

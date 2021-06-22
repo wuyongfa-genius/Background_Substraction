@@ -4,14 +4,16 @@ import os
 from argparse import ArgumentParser
 
 import cv2
-import torch
+import time
 import numpy as np
-from algorithms import IMG_EXTS
-from algorithms import __all__ as BGS_ALGORITHMS
-from algorithms import get_parent_dir, read_img
+import torch
+
+from algorithms.utils import (mk_save_dir, capture_video_frames,
+                              capture_frames, background_substraction, unet_seg, normalize_rescale)
+from algorithms import __bgs__ as BGS_ALGORITHMS
 
 
-def argument():
+def add_args():
     parser = ArgumentParser()
     parser.add_argument('--video_path',
                         default=None,
@@ -19,145 +21,107 @@ def argument():
     parser.add_argument('--frame_dir',
                         default=None,
                         help="Dir of the raw video frames.")
+    parser.add_argument('--use_gpu',
+                        type=bool,
+                        default=False,
+                        help="Whether to use gpu.")
+    parser.add_argument('--resume', help="checkpoint used to test.")
     parser.add_argument(
         '--save_dir',
         default=None,
         help="The results will be under the original dir if save_dir is None!")
     parser.add_argument('--algorithm',
-                        default='RTPCA',
+                        default='GoDec',
                         choices=BGS_ALGORITHMS,
                         help="Algorithm to perform BGS.")
+    parser.add_argument('--seg',
+                        default='filt_thresh',
+                        choices=['original', 'filt_thresh', 'unet'],
+                        help='How to segment foreground objects.')
+    parser.add_argument('--thresh',
+                        default= 128,
+                        type=int,
+                        help='Threshhold to segment foreground objects.')
     return parser.parse_args()
 
 
 def main():
-    args = argument()
-    # initialize bgs alogorithm
-    if args.algorithm == 'RTPCA':
-        from algorithms import RTPCA
-    elif args.algorithm == 'RPCA':
-        from algorithms import RPCA
-    elif args.algorithm == 'RPCA_gpu':
-        from algorithms import RPCA_gpu
-    elif args.algorithm == 'RPCA_sporco':
-        from algorithms import RPCA_sporco
-    elif args.algorithm == 'GoDec':
-        from algorithms import GoDec
+    args = add_args()
+
     # store frames in a array
-    save_dir = None
     frames = []
     start_frame_id = 1
     frame_height, frame_width = 0, 0
-    ## read in video an d process
+    video_length = 1
+    save_dir = mk_save_dir(args.algorithm, args.video_path,
+                           args.frame_dir, args.save_dir)
+    # read in video and process
     if args.video_path is not None:
-        assert args.frame_dir is None
-        # save_dir
-        if args.save_dir is None:
-            video_name = os.path.splitext(
-                (os.path.basename(args.video_path)))[0]
-            save_dir = os.path.join(get_parent_dir(args.video_path),
-                                    f'{video_name}_{args.algorithm}_results')
-            os.makedirs(save_dir)
-        else:
-            os.makedirs(args.save_dir)
-        capture = cv2.VideoCapture(args.video_path)
-        if not capture.isOpened():
-            print('[INFO] Unable to open: ' + args.video_path)
-            exit(0)
-        # 获取视频fps
-        fps = int(capture.get(cv2.CAP_PROP_FPS))
-        frame_all = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
-        frame_height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        frame_width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
-        print("[INFO] 视频FPS: {}".format(fps))
-        print("[INFO] 视频总帧数: {}".format(frame_all))
-        print("[INFO] 视频时长: {}s".format(frame_all / fps))
-        print("[INFO] 视频高度: {0}，宽度: {1}".format(frame_height, frame_width))
-        while True:
-            ret, frame = capture.read()
-            if frame is None:
-                break
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            frame = frame.resahpe((-1, ))
-            frames.append(frame)  # convert to grayscale image
-        capture.release()
-
+        frames, frame_height, frame_width, video_length = capture_video_frames(
+            args.video_path)
     else:
-        assert args.video_path is None
-        assert os.path.exists(args.frame_dir)
-        # save_dir
-        if args.save_dir is None:
-            video_name = args.frame_dir.rstrip('/').split('/')[-1]
-            save_dir = os.path.join(get_parent_dir((args.frame_dir).rstrip('/')),
-                                    f'{video_name}_{args.algorithm}_results')
-            os.makedirs(save_dir)
-        else:
-            os.makedirs(args.save_dir)
-        seqs = os.listdir(args.frame_dir)
-        seqs = [i for i in seqs if os.path.splitext(i)[-1] in IMG_EXTS]
-        seqs.sort()
-        start_frame_id = int(os.path.splitext(seqs[0])[0])
-        example_frame = read_img(os.path.join(args.frame_dir, seqs[0]))
-        frame_height, frame_width = example_frame.shape[:2]
-        assert len(seqs) > 1, "video length must be > 1 !!!"
-        print("[INFO] 视频总帧数: {}".format(len(seqs)))
-        print("[INFO] 视频高度: {0}，宽度: {1}".format(frame_height, frame_width))
-        for seq in seqs:
-            seqpath = os.path.join(args.frame_dir, seq)
-            frame = read_img(seqpath)
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            frame = frame.reshape((-1, ))
-            frames.append(frame)  # convert to grayscale image
+        frames, frame_height, frame_width, start_frame_id, video_length = capture_frames(
+            args.frame_dir, flatten_frame=False)
+
     print("[INFO] All frames have been loaded !!!")
     print("[INFO] Start processing...")
+    tik = time.time()
     # stack frames into a single array
-    X = np.stack(frames, axis=-1)  ## F,N
+    X = np.stack(frames, axis=-1)  # F,N
+    # flatten frames if ther haven't been flattened.
+    if len(X.shape) > 2:
+        X = X.reshape((-1, X.shape[-1]))
     # normalize
-    X = X/255.
-    bg = None  # background
-    fg = None  # foreground
-    if args.algorithm == 'RTPCA':
-        bgs = RTPCA(reg_E=0.001, n_iter_max=100)
-        bg, fg = bgs(X)
-    elif args.algorithm == 'RPCA':
-        bgs = RPCA(X)
-        bg, fg = bgs()
-    elif args.algorithm == 'RPCA_sporco':
-        bgs = RPCA_sporco(X)
-        bg, fg = bgs.solve()
-    elif args.algorithm == 'RPCA_gpu':
-        X = torch.tensor(X)
-        bgs = RPCA_gpu(X.cuda())
-        bg, fg = bgs()
-        bg = bg.cpu().numpy()
-        fg = fg.cpu().numpy()
-    elif args.algorithm == 'GoDec':
-        bgs = GoDec(X, rank=2)
-        bg, fg = bgs()
-    else:
-        NotImplementedError
-    ## rearrange back to image.
+    # X = X/255.
+    x_mean = np.mean(X)
+    x_std = np.std(X)
+    X = (X-x_mean)/x_std
+    # background_substraction
+    fg, bg = background_substraction(X, args.algorithm, args.use_gpu)
+    # rearrange back to image.
     assert bg.shape == fg.shape == X.shape
-    bg = np.transpose(bg) # N,F
-    bg = bg*255
-    fg = np.transpose(fg) # N,F
-    fg = fg*255
-    bg = np.clip(bg, 0, 255).astype(np.uint8)
-    fg = np.clip(fg, 0, 255).astype(np.uint8)
-    ## create save dirs
-    video_length = len(bg)
-    save_dir = save_dir if args.save_dir is None else args.save_dir
+    bg = np.transpose(bg)  # N,F
+    # bg = bg*255
+    bg = bg*x_std+x_mean
+    fg = np.transpose(fg)  # N,F
+    # fg = fg*255
+    fg = fg*x_std+x_mean
+    ## min max
+    fg = normalize_rescale(fg)
+    bg = normalize_rescale(bg)
+    # bg = np.clip(bg, 0, 255).astype(np.uint8)
+    # fg = np.clip(fg, 0, 255).astype(np.uint8)
+    bg = bg.reshape(video_length, frame_height, frame_width)
+    fg = fg.reshape(video_length, frame_height, frame_width)
+    # end of decomposition
+    toc = time.time()
+    print(f"[INFO] Time Elapsed: {(toc-tik):.3f}s")
+    # segment foreground objects
+    if args.seg=='filt_thresh':
+        # median blur
+        fg = [cv2.medianBlur(f, ksize=3) for f in fg]
+        fg = np.stack(fg)
+        # thresh
+        fg_mask = np.zeros_like(fg, dtype=np.uint8)
+        fg_mask[fg>args.thresh] = 255
+    elif args.seg=='unet':
+        assert args.resume is not None
+        fg_mask = unet_seg(fg, resume=args.resume, gpu=torch.cuda.is_available())
+    elif args.seg=='original':
+        fg_mask = fg
+    # create save dirs
+    print("[INFO] Start to write segmentation results...")
     fg_save_dir = os.path.join(save_dir, 'fg')
     os.makedirs(fg_save_dir, exist_ok=True)
     bg_save_dir = os.path.join(save_dir, 'bg')
     os.makedirs(bg_save_dir, exist_ok=True)
-
-    print(f"[INFO] Start to write results...")
+    # write results
     for i in range(video_length):
-        frame_id = start_frame_id + i
-        fg_i = fg[i].reshape(frame_height, frame_width)
-        bg_i = bg[i].reshape(frame_height, frame_width)
-        cv2.imwrite(os.path.join(fg_save_dir, f'fg_{frame_id:06}.png'), fg_i)
+        frame_id = start_frame_id+i
+        new_fg_i = fg_mask[i]
+        bg_i = bg[i]
+        cv2.imwrite(os.path.join(
+            fg_save_dir, f'fg_{frame_id:06}.png'), new_fg_i)
         cv2.imwrite(os.path.join(bg_save_dir, f'bg_{frame_id:06}.png'), bg_i)
     print(
         f"[INFO] Foreground Masks and Background estimations have been saved at {save_dir} !!!"

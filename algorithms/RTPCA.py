@@ -1,5 +1,6 @@
 import tensorly as tl
 import numpy as np
+import torch
 from tensorly import backend as T
 from tensorly.base import fold, unfold
 from tensorly.tenalg.proximal import soft_thresholding, svd_thresholding
@@ -106,7 +107,7 @@ def robust_pca(X, mask=None, tol=10e-7, reg_E=1, reg_J=1,
 
         # Evolution of the reconstruction errors
         rec_X.append(T.norm(X - D - E, 2))
-        rec_D.append(np.max([T.norm(low_rank - D, 2) for low_rank in J]))
+        rec_D.append(max([T.norm(low_rank - D, 2) for low_rank in J]))
 
         # Convergence check
         if iteration > 1:
@@ -115,7 +116,7 @@ def robust_pca(X, mask=None, tol=10e-7, reg_E=1, reg_J=1,
                     print('\nConverged in {} iterations'.format(iteration))
                 break
             else:
-                print("[INFO] iter: ", iteration, "error: ", max(rec_X[-1], rec_D[-1]))
+                print("[INFO] iter:", iteration, " error:", (max(rec_X[-1], rec_D[-1]).item()))
 
     return D, E
 
@@ -176,13 +177,23 @@ class RTPCA:
         self.lr = learning_rate
         self.n_iter_max = n_iter_max
         self.verbose = verbose
+        self.backend = backend
         tl.set_backend(backend)
 
     def __call__(self, X):
-        X = np.transpose(X)
+        if self.backend=='numpy':
+            assert isinstance(X, np.ndarray)
+            X = np.transpose(X)
+        elif self.backend=='pytorch':
+            assert isinstance(X, torch.Tensor)
+            X = torch.transpose(X, 0, 1)
         L, S = robust_pca(X, self.mask, self.tol, self.reg_E, self.reg_J,
                             self.mu_init, self.mu_max, self.lr,
                             self.n_iter_max, self.verbose)
-        L = np.transpose(L)
-        S = np.transpose(S)
+        if self.backend=='numpy':
+            L = np.transpose(L)
+            S = np.transpose(S)
+        elif self.backend=='pytorch':
+            L = torch.transpose(L, 0, 1)
+            S = torch.transpose(S, 0, 1)
         return L, S

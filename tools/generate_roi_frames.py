@@ -51,9 +51,9 @@ def main():
                 get_parent_dir(args.video_path),
                 f'{video_name}_cropped_frames/roi_{left}_{top}_{right}_{down}_frame_{start}_{end}'
             )
-            os.makedirs(save_dir)
+            os.makedirs(save_dir, exist_ok=True)
         else:
-            os.makedirs(args.save_dir)
+            os.makedirs(args.save_dir, exist_ok=True)
         capture = cv2.VideoCapture(args.video_path)
         if not capture.isOpened():
             print('[INFO] Unable to open: ' + args.video_path)
@@ -63,7 +63,7 @@ def main():
         frame_all = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
         frame_height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
         frame_width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
-        assert start >= 1 and end < frame_all, "Invalid frame range!!!"
+        assert start >= 1 and end <= frame_all, "Invalid frame range!!!"
         assert left >= 0 and left < right and top >= 0 and top < down and\
             right <= frame_width and down <= frame_height
         print("[INFO] 视频FPS: {}".format(fps))
@@ -97,14 +97,14 @@ def main():
                 get_parent_dir(args.frame_dir.rstrip('/')),
                 f'{video_name}_cropped_frames/roi_{left}_{top}_{right}_{down}_frame_{start}_{end}'
             )
-            os.makedirs(save_dir)
+            os.makedirs(save_dir, exist_ok=True)
         else:
-            os.makedirs(args.save_dir)
+            os.makedirs(args.save_dir, exist_ok=True)
         seqs = [i for i in seqs if os.path.splitext(i)[-1] in IMG_EXTS]
         seqs.sort()
         # 获取视频信息
         assert len(seqs) > 1, "video length must be > 1 !!!"
-        assert start >= 1 and end < len(seqs), "Invalid frame range!!!"
+        assert start >= 1 and end <= len(seqs), "Invalid frame range!!!"
         example_frame = read_img(os.path.join(args.frame_dir, seqs[0]))
         frame_height, frame_width = example_frame.shape[:2]
         assert left >= 0 and left < right and top >= 0 and top < down and\
