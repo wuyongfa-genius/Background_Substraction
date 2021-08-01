@@ -38,6 +38,25 @@ def generate_video(frame_dir, fg_dir, save_path, **video_info):
     writer.release()
     print(f"video has been saved at {save_path}")
 
+def generate_video_using_fg_and_mask(frames, fg_mask, save_path, **video_info):
+    """Given original frames(List[np.ndarray]) and moving object masks(np.ndarray, shape of NHW),
+    generate a video which visualize the moving objects.
+    Args:
+        frames(List[np.ndarray]): oiginal grayscale frames
+        fg_mask(np.ndarray): moving object masks
+        save_path(Pathlike): path to save the video
+        video_info: info used to generate the video, such as 'frameSize' which is given as tuple(w, h);
+            fps, given as a int; isColor, bool.
+    """
+    assert save_path.endswith('.mp4'), "please save as a mp4 video."
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    assert len(frames)==len(fg_mask), "please make sure fg matches mask."
+    writer = cv2.VideoWriter(save_path, fourcc, **video_info)
+    for i in range(len(frames)):
+        image = put_mask_on_img(frames[i], fg_mask[i])
+        writer.write(image)
+    writer.release()
+    print(f"[INFO] video has been saved at {save_path}")
 
 ##
 if __name__=="__main__":

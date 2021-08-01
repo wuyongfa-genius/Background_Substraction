@@ -1,4 +1,4 @@
-"""Crop ROI raw frames from a given video or original raw frames."""
+"""Crop ROI raw frames from a given video or original raw frames and write them into a video and dir."""
 import os
 from argparse import ArgumentParser
 
@@ -29,6 +29,10 @@ def argument():
         '--save_dir',
         default=None,
         help="Dir to save the results, if not specified, create one.")
+    parser.add_argument(
+        '--write_video',
+        action='store_true',
+        help="Whether to write roi as frames or a video.")
     return parser.parse_args()
 
 
@@ -54,6 +58,11 @@ def main():
             os.makedirs(save_dir, exist_ok=True)
         else:
             os.makedirs(args.save_dir, exist_ok=True)
+        ## video writer if write video
+        if args.write_video:
+            fourcc = cv2.VideoWriter_fourcc(*'XVID')
+            video_info = dict(fps=10, frameSize=(right-left, down-top), isColor=True)
+            writer = cv2.VideoWriter(save_dir+'.avi', fourcc, **video_info)
         capture = cv2.VideoCapture(args.video_path)
         if not capture.isOpened():
             print('[INFO] Unable to open: ' + args.video_path)
@@ -81,11 +90,16 @@ def main():
             if frame_id < start or frame_id > end:
                 continue
             cropped_frame = frame[top:down, left:right]
+            if args.write_video:
+                writer.write(cropped_frame)
             cv2.imwrite(os.path.join(save_dir, f'{frame_id:06}.jpg'),
                         cropped_frame)
             bar.update()
         bar.close()
+        writer.release()
         capture.release()
+        if args.write_video:
+            print(f"[INFO] Done, cropped roi video have been save at {save_dir}.avi")
         print(f"[INFO] Done, cropped raw frames have been save at {save_dir}")
     else:
         assert args.video_path is None
@@ -100,6 +114,11 @@ def main():
             os.makedirs(save_dir, exist_ok=True)
         else:
             os.makedirs(args.save_dir, exist_ok=True)
+        ## video writer if write video
+        if args.write_video:
+            fourcc = cv2.VideoWriter_fourcc(*'XVID')
+            video_info = dict(fps=10, frameSize=(right-left, down-top), isColor=True)
+            writer = cv2.VideoWriter(save_dir+'.avi', fourcc, **video_info)
         seqs = [i for i in seqs if os.path.splitext(i)[-1] in IMG_EXTS]
         seqs.sort()
         # 获取视频信息
@@ -121,10 +140,15 @@ def main():
                 continue
             frame = read_img(seqpath)
             cropped_frame = frame[top:down, left:right]
+            if args.write_video:
+                writer.write(cropped_frame)
             cv2.imwrite(os.path.join(save_dir, f'{frame_id:06}.jpg'),
                         cropped_frame)
             bar.update()
         bar.close()
+        writer.release()
+        if args.write_video:
+            print(f"[INFO] Done, cropped roi video have been save at {save_dir}.avi")
         print(f"[INFO] Done, cropped raw frames have been save at {save_dir}")
 
 

@@ -1,5 +1,5 @@
 from .utils import *
-from .GoDec import GoDec
+from .GoDec import GoDec, godec_original
 # from .RPCA import RPCA, RPCA_gpu  # Robust PCA
 
 from sporco import cupy
